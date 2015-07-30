@@ -1,0 +1,12 @@
+cluster:  flask-sample
+image:    lmok/paugamo-flask
+debug:    true
+ports:
+    - 9000
+
+verbatim:
+  cpu: 0.25
+  mem: 128
+
+settings:
+  welcome: hello i am a sample

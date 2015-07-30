@@ -1,0 +1,16 @@
+cluster:  watcher
+image:    lmok/pod-watcher:actors
+
+
+verbatim:
+  cpus: 1
+  mem: 256
+  env:
+    DAYCARE: "<watched cluster glob 1>,<watched cluster glob 2>"
+
+settings:
+
+  splunk:
+
+    forward: "<splunk indexer ip 1>,<splunk indexer ip 2>" # - array of <host>:<ip>, one for each Splunk backend server to relay logs to
+    sourcetype: ochopod # - source under which the logs should go

@@ -1,0 +1,27 @@
+cluster:  haproxy
+image:    lmok/pod-haproxy
+debug:    true
+# This is the HAProxy frontend port; 9002 is the stats port defined in config
+ports:
+  - 9000
+  - 9002
+
+verbatim:
+  cpu: 1.0
+  mem: 1024
+
+  acceptedResourceRoles:
+    - slave_public
+
+  constraints:
+  -
+    - hostname
+    - UNIQUE
+
+#
+# - the target must be defined (e.g cluster whose containers will be added as listeners)
+# - the receiving TCP port in the target cluster is defaulted to 9000 (pre-remapping)
+#
+settings:
+  target: flask-sample
+  port: 9000

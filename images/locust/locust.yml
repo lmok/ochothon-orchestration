@@ -1,0 +1,16 @@
+cluster:  locust
+image:    lmok/pod-locust
+# Default locust port
+ports:
+  - 8089
+
+verbatim:
+  cpus: 0.5
+  mem: 256
+
+  acceptedResourceRoles:
+    - slave_public
+
+settings:
+  haproxy: <haproxy image name>
+  port: 9000

@@ -1,0 +1,10 @@
+cluster:  scaler
+image:    lmok/pod-scaler:actors
+
+verbatim:
+  cpus: 0.25
+  mem: 64
+  env:
+    SCALEES: "<cluster glob pattern 1>,<cluster glob pattern 2>..."
+    HAPROXIES: "<haproxy glob pattern 1>,<haproxy glob pattern 2>..."
+    PERIOD: "30.0"
