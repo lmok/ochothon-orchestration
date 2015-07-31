@@ -372,6 +372,7 @@ if __name__ == '__main__':
         # - Check for passed set of clusters to be watched in deployment yaml
         #
         watching = env['DAYCARE'].split(',') if 'DAYCARE' in env else ['*'] 
+        period = float(env['PERIOD']) if 'PERIOD' in env else 60
 
         #
         # - Get the portal that we found during cluster configuration (see pod/pod.py)
@@ -459,8 +460,8 @@ if __name__ == '__main__':
         #
         # - Initialise the watcher actors and start
         #
-        watchers = [[Watcher(_remote, cluster, message_log=message_log), cluster] for cluster in clusters]
-        refs = [watcher.start(_remote, cluster, message_log=message_log) for watcher, cluster in watchers]
+        watchers = [[Watcher(_remote, cluster, message_log=message_log, period=period), cluster] for cluster in clusters]
+        refs = [watcher.start(_remote, cluster, message_log=message_log, period=period) for watcher, cluster in watchers]
 
     except Exception as failure:
 

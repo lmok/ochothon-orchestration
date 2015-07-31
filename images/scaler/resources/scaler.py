@@ -50,11 +50,17 @@ class Scaler(ThreadingActor):
 
         if 'action' in msg and msg['action'] == 'scale':
 
-            _proxyscale(remote=self.remote, 
-                        cluster=self.cluster, 
-                        haproxy=self.haproxy, 
-                        period=self.period, 
-                        reps=self.reps)
+            try:
+
+                _proxyscale(remote=self.remote, 
+                            cluster=self.cluster, 
+                            haproxy=self.haproxy, 
+                            period=self.period, 
+                            reps=self.reps)
+
+            except Exception as e:
+
+                logger.warning('Scaler actor exception: %s' % e)
 
             self.actor_ref.tell({'action': 'scale'})
 
@@ -62,7 +68,7 @@ class Scaler(ThreadingActor):
 
         logger.info('Stopping Scaler actor for %s' % cluster)
 
-def output(js, cluster):
+def output(js, cluster, target):
     """
         Helper for logging results from scale requests.
         :param js: jsonified output returned from a request to the portal using shell().
@@ -74,19 +80,18 @@ def output(js, cluster):
         logger.warning('Communication with portal when trying to scale clusters under %s FAILED.' % cluster)
         return
 
-    outs = json.loads(js['out'])
-    failed = any(['failed' in scaled for key, scaled in outs.iteritems()])
+    data = json.loads(js['out'])
+    failed = any([not scaled['ok'] for key, scaled in data.iteritems()]) 
+       
+    import pprint
 
     if failed:
 
-        import pprint
-        logger.warning('Scaling %s FAILURE. Report:\n%s' % (cluster, pprint.pformat(outs)))
+        logger.warning('Scaling %s FAILURE. Report:\n%s' % (cluster, pprint.pformat(data)))
 
     else:
 
-        for name, data in outs.iteritems():
-
-            logger.info('Scaling %s SUCCESS. %d/%d pods are running under %s' % (cluster, data['running'], data['requested'], name))
+        logger.info('Scaling %s to %d instances SUCCESS. Report:\n%s' % (cluster, target, pprint.pformat(data)))
 
 def _proxyscale(remote, cluster, haproxy, period=300.0, reps=5):
     """
@@ -132,7 +137,7 @@ def _proxyscale(remote, cluster, haproxy, period=300.0, reps=5):
     # - Unit and limits by and to which instance number is scaled
     #
     unit =  1
-    lim =  20
+    lim =  40
 
     #
     # - Max and min acceptable session rate (sessions/second -- see HAProxy stats parameters) PER POD
@@ -256,15 +261,18 @@ def _proxyscale(remote, cluster, haproxy, period=300.0, reps=5):
     # - are within the limits
     #
     js = {}
+    target = 0
 
     if (avg_sessions > ceiling_sessions or avg_threads > ceiling_threads) and num + unit <= lim:
 
-            js = remote('scale %s -i %d -j' % (cluster, num + unit))
+            target = num + unit
+            js = remote('scale %s -f @%d -j' % (cluster, num + unit))
             recent = True
 
     elif avg_sessions < floor_sessions and avg_threads < floor_threads and num > unit:
             
-            js = remote('scale %s -i %d -j' % (cluster, num - unit))
+            target = num - unit
+            js = remote('scale %s -f @%d -j' % (cluster, num - unit))
             recent = True
 
     #
@@ -272,121 +280,12 @@ def _proxyscale(remote, cluster, haproxy, period=300.0, reps=5):
     #
     if not js == {}:
 
-        output(js, cluster)
+        output(js, cluster, target)
 
     #
     # - Wait for period minus polling reps
     #
     time.sleep(period - reps if not recent else period/2 - reps)
-
-def _simplescale(remote, clusters, period=300.0):
-    """
-        Scales the cluster automatically with a simple routine.
-
-        This particular example is meant to scale a cluster of pods with this config in its lifecycle::
-
-            from random import choice
-
-            checks = 3
-            check_every = 10.0
-            pipe_subprocess = True
-            metrics = True
-
-            def sanity_check(self, pid):
-                
-                #
-                # - Randomly decide to be stressed  
-                #
-                return {'stressed': choice(['Very', 'Nope'])}
-
-        General usage for this function:
-        :param remote: function used to pass toolset commands to the portal
-        :param clusters: list of strings matching particular namespace/clusters for scaling
-        :param period: period (secs) to wait before polling for metrics and scaling
-    """
-
-    unit =  1
-
-    lim =  4
-
-    while True:
-
-        time.sleep(period)
-        
-        for cluster in clusters:
-
-            #
-            # - Retrieve metrics for the namespace/cluster, ignoring the index
-            # 
-            js = remote('poll %s -j' % cluster)
-            
-            if not js['ok']:
-                logger.warning('Communication with portal during metrics collection failed.')
-                continue
-
-            mets = json.loads(js['out'])
-
-            stressed = sum(1 for key, item in mets.iteritems() if item['stressed'] == 'Very')
-
-            #
-            # - Scale up/down based on how stressed the cluster is and if resources
-            # - are within the limits
-            #
-            js = {}
-
-            if stressed > len(mets)/2.0 and len(mets) + unit <= lim:
-
-                    js = remote('scale %s -i %d -j' % (cluster, len(mets) + unit))
-
-            elif stressed < len(mets)/2.0 and len(mets) > unit:
-                    
-                    js = remote('scale %s -i %d -j' % (cluster, len(mets) - unit))
-
-            #
-            # - Output for calls to scale
-            #
-            if not js == {}:
-
-                output(js, cluster)
-
-def _pulse(remote, clusters, period=300.0):
-    """
-        Scales cluster up and down periodically
-
-        :param remote: function used to pass toolset commands to the portal
-        :param clusters: list of strings matching particular namespace/clusters for scaling
-        :param period: period (secs) between pulses
-    """
-
-    #
-    # - Pulse cluster up and down
-    #
-    i = 0
-
-    while True:
-
-        time.sleep(period)
-
-        for cluster in clusters:
-
-            cmd = ''
-
-            if i % 4 == 0:
-
-                cmd = 'scale %s -i %d -j' % (cluster, 1)
-
-            elif i % 4 == 1 or i % 4 == 3:
-
-                cmd = 'scale %s -i %d -j' % (cluster, 2)
-
-            else:
-
-                cmd = 'scale %s -i %d -j' % (cluster, 3)
-            
-            js = remote(cmd)
-            output(js, cluster)
-
-            i += 1
 
 if __name__ == '__main__':
 
@@ -443,10 +342,30 @@ if __name__ == '__main__':
             return js
 
         #
+        # - Check for overlapping clusters matching all glob patterns
+        #    
+        clusters = []
+
+        for cluster, haproxy in zip(scalees, haproxies):
+
+            js = _remote('grep %s -j' % cluster)
+
+            if not js['ok']:
+
+                logger.warning('Scaler: communication with portal during initialisation failed (could not grep %s).' % cluster)
+                continue
+
+            data = json.loads(js['out'])
+
+            clusters += [('%s*' % ' #'.join(key.split(' #')[:-1]), haproxy) for key in data.keys()]
+
+        clusters = list(set(clusters))
+
+        #
         # - Initialise the scaler actors and start
         #
-        scalers = [[Scaler(_remote, cluster, haproxy), cluster, haproxy] for cluster, haproxy in zip(scalees, haproxies)]
-        refs = [scaler.start(_remote, cluster, haproxy) for scaler, cluster, haproxy in scalers]
+        scalers = [[Scaler(_remote, cluster, haproxy, period), cluster, haproxy] for cluster, haproxy in clusters]
+        refs = [scaler.start(_remote, cluster, haproxy, period) for scaler, cluster, haproxy in scalers]
 
     except Exception as failure:
 
@@ -454,5 +373,15 @@ if __name__ == '__main__':
         logger.fatal('unexpected condition -> %s' % diagnostic(failure))
 
     finally:
+
+        for scaler in scalers:
+
+            try:
+                
+                scaler.stop()
+
+            except Exception as e:
+
+                pass
 
         sys.exit(1)

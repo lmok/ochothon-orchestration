@@ -7,6 +7,7 @@ verbatim:
   mem: 256
   env:
     DAYCARE: "<watched cluster glob 1>,<watched cluster glob 2>"
+	PERIOD: "30.0"
 
 settings:
 
