@@ -1,0 +1,9 @@
+cluster:  cleaner
+image:    lmok/pod-cleaner
+
+verbatim:
+  cpus: 0.25
+  mem: 64
+  env:
+    DIRTY: "<cluster glob pattern 1>,<cluster glob pattern 2>..."
+    PERIOD: "30.0"
