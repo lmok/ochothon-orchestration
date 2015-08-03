@@ -18,7 +18,6 @@ import json
 import logging
 import sys
 import time
-import pprint
 from os import environ
 from os.path import basename, expanduser, isfile
 from ochopod.core.fsm import diagnostic, shutdown
@@ -27,25 +26,6 @@ from pykka import ThreadingActor, ThreadingFuture, Timeout, ActorRegistry
 from pykka.exceptions import ActorDeadError
 
 logger = logging.getLogger('ochopod')
-
-class PublishDictWrapper:
-
-    def __init__(self, cluster):
-        
-        self.cluster = cluster
-        self.publish = {cluster: {}}
-
-    def insert(self, name, issue, diagnosis):
-
-        if not name in self.publish[self.cluster]:
-        
-            self.publish[self.cluster][name] = {}
-
-        self.publish[self.cluster][name][issue] = diagnosis
-
-    def out(self):
-
-        return json.dumps(self.publish[self.cluster])
 
 class Watcher(ThreadingActor):
 
@@ -64,7 +44,7 @@ class Watcher(ThreadingActor):
     def on_start(self):
 
         logger.info('Starting Watcher for %s...' % self.cluster)
-        self.actor_ref.tell({'action': 'watch', 'store_indeces': {self.cluster: {}}, 'store_health': {self.cluster: {}}})
+        self.actor_ref.tell({'action': 'watch', 'store_indeces': {}, 'store_health': {}})
 
     def on_receive(self, msg):
 
@@ -86,22 +66,10 @@ class Watcher(ThreadingActor):
 
         logger.info('Stopping Watcher actor for %s' % cluster)
 
-def _watch(remote, cluster='*', message_log=logger, period=30.0, wait=10.0, checks=3, timeout=20.0, store_indeces=None, store_health=None):
+def _watch(remote, cluster='*', message_log=logger, period=30.0, wait=10.0, checks=3, timeout=20.0, store_indeces={}, store_health={}):
     """
         Watches a list of clusters for failures in health checks (defined as non-running process status). This fires a number of checks
         every period with a wait between each check. E.g. it can check 3 times every 5-minute period with a 10 second wait between checks.
-
-        Publishes data in the format::
-
-            {
-                <cluster_1>:
-                {
-                    {
-                        health: {},
-                        indeces: {}
-                    }
-                }
-            }
 
         :param cluster: glob patterns matching clusters to be watched
         :param period: float amount of seconds in each polling period
@@ -109,6 +77,8 @@ def _watch(remote, cluster='*', message_log=logger, period=30.0, wait=10.0, chec
         :param checks: int number of failed checks allowed before an alert is sent
         :param timeout: float number of seconds allowed for querying ochopod  
     """
+
+    assert period > checks*wait, "A period of %d seconds doesn't allow for %d x %d second polling repetitions." % (period, checks, wait)
 
     print 'Polling cluster %s...' % cluster
 
@@ -120,16 +90,16 @@ def _watch(remote, cluster='*', message_log=logger, period=30.0, wait=10.0, chec
     #
     # - Records of previous health checks
     #
-    store_indeces = {cluster: {}} if store_indeces is None else store_indeces
-    store_health = {cluster: {}} if store_health is None else store_health
+    store_indeces = store_indeces
+    store_health = store_health
 
     #
     # - Dict for publishing JSON data
     #
-    publish = PublishDictWrapper(cluster)
+    publish = {}
 
     #
-    # - Poll clusters every period and log consecutive health check failures
+    # - Poll clusters every period and log consecutive health check failures, up to the allowed number of heath checks
     #
     for i in range(checks + 1):
 
@@ -148,6 +118,7 @@ def _watch(remote, cluster='*', message_log=logger, period=30.0, wait=10.0, chec
         if len(data) == 0:
 
             logger.warning('Watcher: did not find any pods under %s.' % cluster)
+            continue
 
         #
         # - Store current indeces in dict of {key: [list of found indeces]}
@@ -170,7 +141,7 @@ def _watch(remote, cluster='*', message_log=logger, period=30.0, wait=10.0, chec
             #
             # - update current health records with status from grep for this particular namespace/cluster 
             #
-            curr_indeces[name] = [index] if name not in curr_indeces else curr_indeces[name] + [index]
+            curr_indeces[name] = [index] if not name in curr_indeces else curr_indeces[name] + [index]
             
             curr_health[name] = {'up': 0, 'down': 0} if not name in curr_health else curr_health[name]
 
@@ -182,54 +153,54 @@ def _watch(remote, cluster='*', message_log=logger, period=30.0, wait=10.0, chec
 
                 curr_health[name]['down'] += 1
 
-        #
+        # ---------------------
         # - Analyse pod indeces
-        #
+        # ---------------------
         for name, indeces in curr_indeces.iteritems():
 
             #
             # - First time cluster has been observed
             #
-            if not name in store_indeces[cluster]:
+            if not name in store_indeces:
 
-                store_indeces[cluster][name] = indeces
+                store_indeces[name] = indeces
                 continue
 
             #
             # - The base index has changed (not supposed to happen even when scaling to an instance # above 0)
             # - warn anyway if indeces have jumped even if health is fine
             #
-            base_index = sorted(store_indeces[cluster][name])[0]
+            base_index = sorted(store_indeces[name])[0]
 
             if base_index not in indeces:
 
-                publish.insert(name, 'index_changed_base', '#%d to #%d' % (base_index, sorted(indeces)[0]))
+                publish.update({name: {'index_changed_base': '#%d to #%d' % (base_index, sorted(indeces)[0])}})
 
             #
             # - Some previously-stored indeces have disappeared if delta is not None
             #
-            delta = set(store_indeces[cluster][name]) - set(indeces)
+            delta = set(store_indeces[name]) - set(indeces)
             
             if delta:
 
-                publish.insert(name, 'indeces_lost', '[%s]' % (', '.join(map(str, delta))))
+                publish.update({name: {'indeces_lost': '[%s]' % (', '.join(map(str, delta)))}})
 
             #
             # Update the stored indeces with current list
             #
-            store_indeces[cluster][name] = indeces
+            store_indeces[name] = indeces
 
-        #
+        # --------------------
         # - Analyse pod health
-        #
+        # --------------------
         for name, health in curr_health.iteritems():
 
             #
             # - First time cluster has been observed
             #
-            if not name in store_health[cluster]:
+            if not name in store_health:
 
-                store_health[cluster][name] = {
+                store_health[name] = {
                     'remaining': checks, 
                     'ochopod_cluster_activity': 'active',
                     'report_next_failure': True,
@@ -239,9 +210,9 @@ def _watch(remote, cluster='*', message_log=logger, period=30.0, wait=10.0, chec
             #
             # - Cluster healthy and stable
             #
-            elif health['down'] == 0 and health['up'] == store_health[cluster][name]['ochopod_cluster_up']:
+            elif health['down'] == 0 and health['up'] == store_health[name]['ochopod_cluster_up']:
 
-                store_health[cluster][name].update({
+                store_health[name].update({
                     'ochopod_cluster_activity': 'stable',
                 })
 
@@ -253,7 +224,7 @@ def _watch(remote, cluster='*', message_log=logger, period=30.0, wait=10.0, chec
                 #
                 # - Reset remaining checks
                 #
-                store_health[cluster][name].update({
+                store_health[name].update({
                     'remaining': checks,
                     'ochopod_cluster_activity': 'active',
                 })
@@ -261,9 +232,9 @@ def _watch(remote, cluster='*', message_log=logger, period=30.0, wait=10.0, chec
             #
             # - Cluster unhealthy but active
             #
-            elif health['up'] != store_health[cluster][name]['ochopod_cluster_up'] or health['down'] != store_health[cluster][name]['ochopod_cluster_down']:
+            elif health['up'] != store_health[name]['ochopod_cluster_up'] or health['down'] != store_health[name]['ochopod_cluster_down']:
 
-                store_health[cluster][name].update({
+                store_health[name].update({
                     'ochopod_cluster_activity': 'fluctuating',
                 })
 
@@ -272,32 +243,41 @@ def _watch(remote, cluster='*', message_log=logger, period=30.0, wait=10.0, chec
             #
             else:
 
-                store_health[cluster][name]['remaining'] -= 1
-                store_health[cluster][name]['ochopod_cluster_activity'] = 'stagnant'
+                store_health[name]['remaining'] -= 1
+                store_health[name]['ochopod_cluster_activity'] = 'stagnant'
 
-            store_health[cluster][name].update({
+            #
+            # - Update all other parameters
+            #
+            store_health[name].update({
                 'ochopod_cluster_down': health['down'],
                 'ochopod_cluster_up': health['up'],
                 'ochopod_diagnostic': {key: status for key, status in data.iteritems() 
                     if not status['process'] in allowed and ' #'.join(key.split(' #')[:-1]) == name}
             })
 
-        #
-        # - Check if any application has disappeared entirely
-        #
-        for name, health in store_health[cluster].iteritems():
+        # -----------------------------------------------
+        # - Check if any cluster has disappeared entirely
+        # -----------------------------------------------
+        for name, health in store_health.iteritems():
 
             if name not in curr_health:
 
-                store_health[cluster][name] = {
-                    'remaining': 0, 
-                    'ochopod_cluster_activity': 'absent', 
-                    'ochopod_cluster_up': 0, 
-                    'ochopod_cluster_down': 0, 
-                    'ochopod_diagnostic': 'lost cluster'
-                }
-                publish.insert(name, 'lost_indeces', (', '.join(map(str, store_indeces[cluster][name]))))
-                publish.insert(name, 'changed_base_index', '#%d to None' % (str(sorted(store_indeces[cluster][name])[0])))
+                publish.update({
+                    name: {
+                        'lost_indeces': ', '.join(map(str, store_indeces[name])),
+                        'index_changed_base': '#%d to None' % (str(sorted(store_indeces[name])[0])),
+                        'health': {
+                            'ochopod_cluster_activity': 'absent', 
+                            'ochopod_cluster_up': 0, 
+                            'ochopod_cluster_down': 0, 
+                            'ochopod_diagnostic': 'lost cluster'
+                        }
+                    }
+                })
+
+                del store_health[name]
+                del store_indeces[name]
 
         time.sleep(wait)
 
@@ -306,50 +286,71 @@ def _watch(remote, cluster='*', message_log=logger, period=30.0, wait=10.0, chec
     # - all health checks had failed
     # - Do this whole loop once per _watch() call
     #
-    for name, health in store_health[cluster].iteritems():
+    for name, health in store_health.iteritems():
 
         #
         # - Cluster is unhealthy and stagnant; report just once
         #
         if 'remaining' in health and not health['remaining'] > 0 and health['ochopod_cluster_activity'] == 'stagnant' and health['report_next_failure']:
 
-            publish.insert(name, 'health', {key: item for key, item in health.iteritems() if key not in ['report_next_failure', 'report_recovery', 'remaining']})
+            publish.update({
+                name: {
+                    'health': {key: item for key, item in health.iteritems() 
+                        if key not in ['report_next_failure', 'report_recovery', 'remaining']}
+                }
+            })
 
-            health['report_next_failure'] = False
-            health['report_recovery'] = True
+            health.update({
+                'report_next_failure': False,
+                'report_recovery': True
+            })
 
         #
         # - Cluster is unhealthy and fluctuating; keep reporting until stagnation/recovery
         #
         elif health['ochopod_cluster_activity'] == 'fluctuating' and health['report_next_failure']:
 
-            publish.insert(name, 'health', {key: item for key, item in health.iteritems() if key not in ['report_next_failure', 'report_recovery', 'remaining']})
+            publish.update({
+                name: {
+                    'health': {key: item for key, item in health.iteritems() 
+                        if key not in ['report_next_failure', 'report_recovery', 'remaining']}
+                }
+            })
 
-            health['report_next_failure'] = True
-            health['report_recovery'] = True
+            health.update({
+                'report_next_failure': True,
+                'report_recovery': True
+            })
 
         #
         # - Cluster was unhealthy but has recovered; report just once
         #
         elif health['ochopod_cluster_activity'] in ['active', 'stable'] and health['report_recovery']:
 
-            publish.insert(name, 'health', {key: item for key, item in health.iteritems() if key not in ['report_next_failure', 'report_recovery', 'remaining', 'ochopod_diagnostic']})
+            publish.update({
+                name: {
+                    'health': {key: item for key, item in health.iteritems() 
+                        if key not in ['report_next_failure', 'report_recovery', 'remaining', 'ochopod_diagnostic']}
+                }
+            })
 
-            health['report_next_failure'] = True
-            health['report_recovery'] = False         
+            health.update({
+                'report_next_failure': True,
+                'report_recovery': False
+            })        
 
         #
         # - Reset checks count for next period
         #
-        store_health[cluster][name]['remaining'] = checks
+        store_health[name]['remaining'] = checks
 
-    outs = publish.out()
+    outs = json.dumps(publish)
 
     if outs != '{}':
 
         message_log.info(outs)
 
-    time.sleep(period)
+    time.sleep(period - checks*wait)
 
     return store_indeces, store_health
 
@@ -397,7 +398,7 @@ if __name__ == '__main__':
         # - load our logging configuration from config/log.cfg
         # - make sure to not reset existing loggers
         #
-        fileConfig('/opt/watcher/config/log.cfg')
+        fileConfig('/opt/watcher/config/log.cfg', disable_existing_loggers=False)
 
         #
         # - add a small capacity rotating log
@@ -449,7 +450,8 @@ if __name__ == '__main__':
 
             if not js['ok']:
 
-                logger.warning('Watcher: communication with portal during initialisation failed.')
+                logger.warning('Watcher: communication with portal during initialisation failed (could not grep %s).' % cluster)
+                continue
 
             data = json.loads(js['out'])
 
