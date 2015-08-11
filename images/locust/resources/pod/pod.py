@@ -17,6 +17,8 @@
 import logging
 import json
 import os
+import requests
+from ochopod.core.utils import retry
 from ochopod.bindings.ec2.marathon import Pod
 from ochopod.models.piped import Actor as Piped
 from ochopod.models.reactive import Actor as Reactive
@@ -58,5 +60,32 @@ if __name__ == '__main__':
             urls = cluster.grep(cfg['haproxy'], cfg['port']).split(',')
             
             return 'locust --host=http://%s' % urls[0], {}
+
+        def signaled(self, js, process):
+
+            #
+            # - ping the locust flask with whatever json you need
+            #
+            @retry(timeout=30.0, pause=0)
+            def _self_curl(method, endpoint, payload=None):
+
+                if method == requests.post:
+
+                    reply = method('http://localhost:8089/%s' % endpoint, data=payload)
+
+                else:
+
+                    reply = method('http://localhost:8089/%s' % endpoint, params=payload)
+                    
+                code = reply.status_code
+                assert code == 200 or code == 201, 'Locust curl failed'
+                return json.loads(reply.text)
+
+            if 'swarm' in js:
+
+                return _self_curl(requests.post, 'swarm', js['swarm'])
+
+            key, val = js.popitem()
+            return _self_curl(requests.get, key, val)
 
     Pod().boot(Strategy, model=Model)
