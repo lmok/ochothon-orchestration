@@ -52,4 +52,28 @@ if __name__ == '__main__':
             
             return 'python -u scaler.py', {}
 
+        def signaled(self, js, process):
+
+            #
+            # - ping the locust flask with whatever json you need
+            #
+            @retry(timeout=30.0, pause=0)
+            def _self_curl(method, endpoint, payload=None):
+
+                if method == requests.post:
+
+                    reply = method('http://localhost:9001/%s' % endpoint, data=payload)
+
+                else:
+
+                    reply = method('http://localhost:9001/%s' % endpoint, params=payload)
+                    
+                code = reply.status_code
+                assert code == 200 or code == 201, 'Scaler curl failed'
+                return json.loads(reply.text)
+            
+            key, val = js.popitem()
+                       
+            return _self_curl(requests.get if 'retrieve' in js else requests.post, key, val)
+
     Pod().boot(Strategy, model=Model)
