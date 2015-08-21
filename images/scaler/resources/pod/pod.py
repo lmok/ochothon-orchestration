@@ -50,6 +50,6 @@ if __name__ == '__main__':
             with open('/opt/scaler/.portal', 'w') as f:
                 f.write(cluster.grep('portal', 9000))
             
-            return 'python scaler.py', {}
+            return 'python -u scaler.py', {}
 
     Pod().boot(Strategy, model=Model)

@@ -175,7 +175,9 @@ if __name__ == '__main__':
         # - Check for passed set of dirty clusters, haproxies, and time period in deployment yaml
         #
         cleaning = env['DIRTY'].split(',') if 'DIRTY' in env else []
-            
+        
+        literal = env['LITERAL'] in ['True', 'true', 'T', '1', 't'] if 'LITERAL' in env else False
+
         period = float(env['PERIOD']) if 'PERIOD' in env else 60
 
         #
@@ -214,6 +216,14 @@ if __name__ == '__main__':
         clusters = []
 
         for cluster in cleaning:
+
+            #
+            # - if literal, don't bother grepping
+            #
+            if literal:
+
+                clusters += [cluster]
+                continue
 
             js = _remote('grep %s -j' % cluster)
 

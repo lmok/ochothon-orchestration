@@ -31,7 +31,7 @@ logger = logging.getLogger('ochopod')
 
 class Scaler(ThreadingActor):
 
-    def __init__(self, remote, cluster, haproxy, period=30.0, reps=5):
+    def __init__(self, remote, cluster, haproxy, period=30.0, reps=4):
 
             super(Scaler, self).__init__() 
 
@@ -43,7 +43,7 @@ class Scaler(ThreadingActor):
 
     def on_start(self):
 
-        logger.info('Starting Scaler for %s...' % self.cluster)
+        logger.info('Starting Scaler for %s at %ds periods...' % (self.cluster, self.period))
         self.actor_ref.tell({'action': 'scale'})
 
     def on_receive(self, msg):
@@ -60,13 +60,13 @@ class Scaler(ThreadingActor):
 
             except Exception as e:
 
-                logger.warning('Scaler actor exception: %s' % e)
+                logger.warning('Scaler actor for %s exception: %s' % (self.cluster, e))
 
             self.actor_ref.tell({'action': 'scale'})
 
     def on_stop(self):
 
-        logger.info('Stopping Scaler actor for %s' % cluster)
+        logger.info('Stopping Scaler actor for %s' % self.cluster)
 
 def output(js, cluster, target):
     """
@@ -93,7 +93,7 @@ def output(js, cluster, target):
 
         logger.info('Scaling %s to %d instances SUCCESS. Report:\n%s' % (cluster, target, pprint.pformat(data)))
 
-def _proxyscale(remote, cluster, haproxy, period=300.0, reps=5):
+def _proxyscale(remote, cluster, haproxy, period, reps):
     """
         Scales clusters under provided cluster glob patterns according to their load. This is checked through HAproxy pods.
 
@@ -131,13 +131,13 @@ def _proxyscale(remote, cluster, haproxy, period=300.0, reps=5):
         :param reps: int number of 1-second poll repetitions to get stats from HAProxy
     """ 
 
-    assert period > reps, "A period of %d seconds doesn't allow for %d x 1 second polling repetitions." % (period, reps)
+    assert period/2 > reps, "A period of %d seconds doesn't allow for %d x 1 second polling repetitions." % (period, reps)
 
     #
     # - Unit and limits by and to which instance number is scaled
     #
     unit =  1
-    lim =  40
+    lim =  35
 
     #
     # - Max and min acceptable session rate (sessions/second -- see HAProxy stats parameters) PER POD
@@ -269,7 +269,7 @@ def _proxyscale(remote, cluster, haproxy, period=300.0, reps=5):
             js = remote('scale %s -f @%d -j' % (cluster, num + unit))
             recent = True
 
-    elif avg_sessions < floor_sessions and avg_threads < floor_threads and num > unit:
+    elif (avg_sessions < floor_sessions or avg_threads < floor_threads) and num > unit:
             
             target = num - unit
             js = remote('scale %s -f @%d -j' % (cluster, num - unit))
@@ -306,8 +306,9 @@ if __name__ == '__main__':
         # - Check for passed set of scalee clusters, haproxies, and time period in deployment yaml
         #
         scalees = env['SCALEES'].split(',') if 'SCALEES' in env else []
-
         haproxies = env['HAPROXIES'].split(',') if 'HAPROXIES' in env else []
+        
+        literal = env['LITERAL'] in ['True', 'true', 'T', '1', 't'] if 'LITERAL' in env else False
             
         period = float(env['PERIOD']) if 'PERIOD' in env else 60
 
@@ -348,6 +349,14 @@ if __name__ == '__main__':
 
         for cluster, haproxy in zip(scalees, haproxies):
 
+            #
+            # - if literal, don't bother grepping
+            #
+            if literal:
+
+                clusters += [(cluster, haproxy)]
+                continue
+
             js = _remote('grep %s -j' % cluster)
 
             if not js['ok']:
@@ -357,7 +366,7 @@ if __name__ == '__main__':
 
             data = json.loads(js['out'])
 
-            clusters += [('%s*' % ' #'.join(key.split(' #')[:-1]), haproxy) for key in data.keys()]
+            clusters += [('%s*' % ' #'.join(key.split(' #')[:-1]), '%s*' % haproxy) for key in data.keys()]
 
         clusters = list(set(clusters))
 

@@ -137,35 +137,15 @@ def start(remote, reset, period, nosim, stagnant_pings, graph):
             user_counts = []
             pod_counts = []
 
-            # print 'Turning locust on to 1600/0.5'
-            # # Switch dem locusts on
-            # js = remote('ping \'{\\"swarm\\": {\\"locust_count\\": 1600, \\"hatch_rate\\": 0.5}}\' *locust* -j -v ')
+            plan = [(700, 0.5), (100, 0.01), (600, 2), (100, 0.01), (5, 0.01)]
 
-            # user_counts, pod_counts = poll(remote, period, writer=writer, stagnant_pings=stagnant_pings)
+            for count, rate in plan:
 
-            # print 'Locust to 1100/0'
-            # # Switch dem locusts to ~ 500 each
-            # js = remote('ping \'{\\"swarm\\": {\\"locust_count\\": 1100, \\"hatch_rate\\": 0}}\' *locust* -j -v ')
+                print 'Locust to %d/%d' % (count, rate)
+                # Switch dem locusts to ~ 500 each
+                js = remote('ping \'{\\"swarm\\": {\\"locust_count\\": %d, \\"hatch_rate\\": %d}}\' *locust* -j -v ' % (count, rate))
+                user_counts, pod_counts = poll(remote, period, writer=writer, stagnant_pings=stagnant_pings, user_counts=user_counts, pod_counts=pod_counts)
 
-            # user_counts, pod_counts = poll(remote, period, writer=writer, stagnant_pings=stagnant_pings, user_counts=user_counts, pod_counts=pod_counts)
-
-            print 'Locust to 600/1'
-            # Switch dem locusts to ~ 500 each
-            js = remote('ping \'{\\"swarm\\": {\\"locust_count\\": 600, \\"hatch_rate\\": 1}}\' *locust* -j -v ')
-
-            user_counts, pod_counts = poll(remote, period, writer=writer, stagnant_pings=stagnant_pings, user_counts=user_counts, pod_counts=pod_counts)
-
-            # print 'Locust to 1600/1'
-            # # Switch dem locusts on again
-            # js = remote('ping \'{\\"swarm\\": {\\"locust_count\\": 1600, \\"hatch_rate\\": 1}}\' *locust* -j -v ')
-
-            # user_counts, pod_counts = poll(remote, period, writer=writer, stagnant_pings=stagnant_pings, user_counts=user_counts, pod_counts=pod_counts)
-
-            print 'Locust to 100/0.01'
-            # Switch dem locusts to ~ 500 each
-            js = remote('ping \'{\\"swarm\\": {\\"locust_count\\": 5, \\"hatch_rate\\": 0.01}}\' *locust* -j -v ')
-
-            user_counts, pod_counts = poll(remote, period, writer=writer, stagnant_pings=stagnant_pings, user_counts=user_counts, pod_counts=pod_counts)
             print user_counts
             print pod_counts
             print 'Outputting final rows'

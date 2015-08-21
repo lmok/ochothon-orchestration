@@ -50,21 +50,26 @@ class Watcher(ThreadingActor):
 
         if 'action' in msg and msg['action'] == 'watch':
 
-            store_indeces, store_health = _watch(self.remote, 
-                                                cluster=self.cluster, 
-                                                message_log=self.message_log, 
-                                                period=self.period, 
-                                                wait=self.wait,
-                                                checks=self.checks, 
-                                                timeout=self.timeout,
-                                                store_indeces=msg['store_indeces'],
-                                                store_health=msg['store_health'])
+            try:
+
+                store_indeces, store_health = _watch(self.remote, 
+                                                    cluster=self.cluster, 
+                                                    message_log=self.message_log, 
+                                                    period=self.period, 
+                                                    wait=self.wait,
+                                                    checks=self.checks, 
+                                                    timeout=self.timeout,
+                                                    store_indeces=msg['store_indeces'],
+                                                    store_health=msg['store_health'])
+            except Exception as e:
+
+                logger.warning('Watcher actor for %s exception: %s' % (self.cluster, e))
 
             self.actor_ref.tell({'action': 'watch', 'store_indeces': store_indeces, 'store_health': store_health})
 
     def on_stop(self):
 
-        logger.info('Stopping Watcher actor for %s' % cluster)
+        logger.info('Stopping Watcher actor for %s' % self.cluster)
 
 def _watch(remote, cluster='*', message_log=logger, period=30.0, wait=10.0, checks=3, timeout=20.0, store_indeces={}, store_health={}):
     """
@@ -372,7 +377,10 @@ if __name__ == '__main__':
         #
         # - Check for passed set of clusters to be watched in deployment yaml
         #
-        watching = env['DAYCARE'].split(',') if 'DAYCARE' in env else ['*'] 
+        watching = env['DAYCARE'].split(',') if 'DAYCARE' in env else []
+        
+        literal = env['LITERAL'] in ['True', 'true', 'T', '1', 't'] if 'LITERAL' in env else False
+
         period = float(env['PERIOD']) if 'PERIOD' in env else 60
 
         #
@@ -445,6 +453,14 @@ if __name__ == '__main__':
         clusters = []
 
         for cluster in watching:
+
+            #
+            # - if literal, don't bother grepping
+            #
+            if literal:
+
+                clusters += [cluster]
+                continue
 
             js = _remote('grep %s -j' % cluster)
 
